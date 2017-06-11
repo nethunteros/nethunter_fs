@@ -1,0 +1,133 @@
+#!/bin/bash
+
+export MALLOC_CHECK_=0 # workaround for LP: #520465
+export LC_ALL=C
+export DEBIAN_FRONTEND=noninteractive
+
+mount -t proc proc "$rootfs/proc"
+mount -o bind /dev "$rootfs/dev"
+mount -o bind /dev/pts "$rootfs/dev/pts"
+
+cat << EOF > "$rootfs/debconf.set"
+console-common console-data/keymap/policy select Select keymap from full list
+console-common console-data/keymap/full select en-latin1-nodeadkeys
+EOF
+
+cat << EOF > "$rootfs/third-stage"
+#!/bin/bash
+
+dpkg-divert --add --local --divert /usr/sbin/invoke-rc.d.chroot --rename /usr/sbin/invoke-rc.d
+cp /bin/true /usr/sbin/invoke-rc.d
+echo -e "#!/bin/sh\nexit 101" > /usr/sbin/policy-rc.d
+chmod +x /usr/sbin/policy-rc.d
+
+apt-get clean
+rm -rf /var/lib/apt/lists/*
+apt-get clean
+apt-get update
+
+debconf-set-selections /debconf.set
+rm -f /debconf.set
+apt-get -y install locales-all git-core binutils ca-certificates initramfs-tools locales console-common less nano git
+echo "root:toor" | chpasswd
+sed -i -e 's/KERNEL\!=\"eth\*|/KERNEL\!=\"/' /lib/udev/rules.d/75-persistent-net-generator.rules
+rm -f /etc/udev/rules.d/70-persistent-net.rules
+
+echo "I: Installing packages with apt-get: $packages"
+apt-get --yes --force-yes install $packages
+
+rm -f /usr/sbin/policy-rc.d
+rm -f /usr/sbin/invoke-rc.d
+dpkg-divert --remove --rename /usr/sbin/invoke-rc.d
+EOF
+# End of third-stage script
+
+if [ "$build_size" = full ]; then
+	cat << EOF >> "$rootfs/third-stage"
+
+	# Enable PHP in Apache
+	a2enmod php7.0
+
+	# Enable /var/www/html as default, disable mana unless we need it
+	a2dissite 000-mana-toolkit.conf
+	a2ensite 000-default.conf
+
+EOF
+	# End of third-stage script append
+fi
+
+chmod +x "$rootfs/third-stage"
+chroot_do /third-stage
+
+# Add /system/xbin to PATH
+echo "[+] Adding /system/xbin to path"
+cat << EOF >> "$rootfs/root/.profile"
+
+# Add /system/xbin to PATH
+PATH="$PATH:/system/xbin"
+EOF
+
+# Source .bashrc and .profile at login
+echo "[+] Adding bashrc/profile sourcing to bash_profile"
+cat << EOF >> "$rootfs/root/.bash_profile"
+
+. /root/.bashrc
+. /root/.profile
+cd ~
+EOF
+
+# Modify Kismet log saving folder
+sed -i 's|.*\blogprefix=.*|logprefix=/captures/kismet/|g' "$rootfs/etc/kismet/kismet.conf"
+sed -i 's|.*\bncsource=wlan0|ncsource=wlan1|g' "$rootfs/etc/kismet/kismet.conf"
+sed -i 's|.*\bgpshost=.*|gpshost=127.0.0.1:2947|g' "$rootfs/etc/kismet/kismet.conf"
+
+# Modify SSHD to allow password logins which is a security risk 
+# if the user doesn't change their password
+# or change their configuration for key based ssh
+echo "[+] Modifying SSH to allow root user"
+
+sed -i -e 's/^#PermitRootLogin prohibit-password/PermitRootLogin yes/' "$rootfs/etc/ssh/sshd_config"
+
+# Sets the default for hostapd.conf to the mana karma version
+sed -i 's#^DAEMON_CONF=.*#DAEMON_CONF=/etc/mana-toolkit/hostapd-karma.conf#' "$rootfs/etc/init.d/hostapd"
+sed -i 's/wlan0/wlan1/g' "$rootfs/etc/mana-toolkit/hostapd-karma.conf"
+
+# DNSMASQ Configuration options for optional access point
+cat << EOF > "$rootfs/etc/dnsmasq.conf"
+log-facility=/var/log/dnsmasq.log
+#address=/#/10.0.0.1
+#address=/google.com/10.0.0.1
+interface=wlan1
+dhcp-range=10.0.0.10,10.0.0.250,12h
+dhcp-option=3,10.0.0.1
+dhcp-option=6,10.0.0.1
+#no-resolv
+log-queries
+EOF
+
+# In order for metasploit to work daemon,nginx,postgres must all be added to inet
+# beef-xss creates user beef-xss. Openvpn server requires nobdy:nobody in order to work.
+cat << EOF >> "$rootfs/etc/group"
+inet:x:3004:postgres,root,beef-xss,daemon,nginx,mysql
+nobody:x:3004:nobody
+EOF
+
+# Apt now adds a new user to "nobody" but the _apt user can't access updates
+# because of inet.  Modify passwd to put them in inet group for android
+sed -i 's/_apt:x:104:65534/_apt:x:104:3004/g' "$rootfs/etc/passwd"
+
+# Fix armitage to run on NH
+# https://github.com/offensive-security/kali-nethunter/issues/600
+sed -i s/-XX\:\+AggressiveHeap//g "$rootfs/usr/share/armitage/armitage"
+
+# Insert correct .bashrc file from kali-defaults
+chroot_do cp /etc/skel/.bashrc /root/.bashrc
+
+# Copy necessary scripts and make executable (/dev/null to supress error msgs for following symlinks)
+chroot_do chmod 755 /usr/bin/* 2> /dev/null
+chroot_do chmod 755 /usr/share/mana-toolkit/run-mana/*.sh 2> /dev/null
+
+# Minor fix for mana-toolkit which made changes in update.  We need to mirror fixes.
+sed -i 's|dhcpd -cf /etc/mana-toolkit/dhcpd\.conf.*|dnsmasq -z -C /etc/mana-toolkit/dnsmasq-dhcpd.conf -i $phy -I lo|' "$rootfs/usr/share/mana-toolkit/run-mana/"*
+
+echo "[+] Completed stage 3!"
