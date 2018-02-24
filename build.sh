@@ -77,9 +77,9 @@ echo "[+] Selected build size: $build_size"
 echo "[+] Selected architecture: $build_arch"
 sleep 1
 
-# Dependency checks
+# Dependency checks (libesd0-dev removed)
 dep_check() {
-	build_deps="git-core gnupg flex bison gperf libesd0-dev build-essential binfmt-support
+	build_deps="git-core gnupg flex bison gperf build-essential binfmt-support
 		zip curl libncurses5-dev zlib1g-dev libncurses5-dev gcc-multilib g++-multilib
 		parted kpartx pixz qemu-user qemu-user-static abootimg cgpt vboot-kernel-utils
 		vboot-utils bc lzma lzop xz-utils automake autoconf m4 dosfstools rsync u-boot-tools

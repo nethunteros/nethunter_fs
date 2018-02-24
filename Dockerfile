@@ -18,7 +18,7 @@ RUN apt-get install -y git-core gnupg flex bison gperf build-essential \
 zip curl libncurses5-dev zlib1g-dev \
 libncurses5-dev gcc-multilib g++-multilib sudo \
 parted kpartx debootstrap pixz qemu-user-static abootimg cgpt vboot-kernel-utils \
-libesd0-dev bc lzma lzop automake autoconf m4 dosfstools rsync u-boot-tools nano \
+bc lzma lzop automake autoconf m4 dosfstools rsync u-boot-tools nano \
 schedtool git e2fsprogs device-tree-compiler ccache dos2unix binfmt-support
 
 ENV KALI_WORKSPACE /root/nethunter-fs
